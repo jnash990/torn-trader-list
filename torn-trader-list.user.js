@@ -9,8 +9,8 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @connect      api.torn.com
-// @downloadURL https://raw.githubusercontent.com/teu-utilizador/repositorio/main/torn-trader-list.user.js
-// @updateURL   https://raw.githubusercontent.com/teu-utilizador/repositorio/main/torn-trader-list.user.js
+// @downloadURL https://raw.githubusercontent.com/jnash990/torn-trader-list/refs/heads/main/torn-trader-list.user.js
+// @updateURL   https://raw.githubusercontent.com/jnash990/torn-trader-list/refs/heads/main/torn-trader-list.user.js
 // ==/UserScript==
 
 (function () {
