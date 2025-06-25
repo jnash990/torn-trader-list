@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trader List
 // @namespace    https://torn.com/
-// @version      1.0
+// @version      1.1
 // @description  Trader list manager: add/remove from profile, view status, access trade from sidebar, styled like native sections in Torn sidebar.
 // @match        https://www.torn.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
@@ -255,8 +255,11 @@
     };
 
     const refreshUI = () => {
-        injectAddTraderProfileButton();
-        renderTraderBlock();
+      if(document.querySelector('div[class*="sidebar"][class*="desktop"]'))
+      {
+          injectAddTraderProfileButton();
+          renderTraderBlock();
+      }
     };
 
     const observer = new MutationObserver(refreshUI);
