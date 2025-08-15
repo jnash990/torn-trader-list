@@ -174,7 +174,7 @@
 
       // Filter out offline traders, keep only online and idle
       const activeTraders = statusMap.filter(t => t.status === 'Online' || t.status === 'Idle');
-
+      
       // Counter shows Online + Idle
       const onlineCount = activeTraders.length;
 
@@ -209,12 +209,12 @@
           li.style.width = '90%';
 
           const statusDot = createStatusDot(t.status);
-
+          
           const nameLink = document.createElement('a');
           nameLink.href = `https://www.torn.com/profiles.php?XID=${t.id}`;
           nameLink.textContent = t.name;
           nameLink.style.flex = '1 1 auto';
-
+          
           // Add status tooltip for idle users (on name, dot and row)
           if (t.status === 'Idle') {
             const relText = `Idle: ${formatRelative(t.relative)}`;
@@ -225,7 +225,7 @@
 
           li.appendChild(statusDot);
           li.appendChild(nameLink);
-
+          
           // Add icons container aligned to the right
           const iconsContainer = document.createElement('span');
           iconsContainer.style.display = 'inline-flex';
@@ -233,7 +233,7 @@
           iconsContainer.style.gap = '4px';
           iconsContainer.style.marginLeft = 'auto';
           iconsContainer.style.opacity = '0.7';
-
+          
           // Price icon (if configured)
           if (t.priceLink) {
             const priceIcon = document.createElement('a');
@@ -246,7 +246,7 @@
             priceIcon.innerHTML = priceSvgIcon;
             iconsContainer.appendChild(priceIcon);
           }
-
+          
           // Feedback icon (if configured)
           if (t.feedbackLink) {
             const feedbackIcon = document.createElement('a');
@@ -259,7 +259,7 @@
             feedbackIcon.innerHTML = feedbackSvgIcon;
             iconsContainer.appendChild(feedbackIcon);
           }
-
+          
           // Trade icon (always shown)
           const tradeIcon = document.createElement('a');
           tradeIcon.href = `https://www.torn.com/trade.php#step=start&userID=${t.id}`;
@@ -268,7 +268,7 @@
           tradeIcon.style.textDecoration = 'none';
           tradeIcon.innerHTML = tradeSvgIcon;
           iconsContainer.appendChild(tradeIcon);
-
+          
           li.appendChild(iconsContainer);
 
           ul.appendChild(li);
@@ -293,7 +293,7 @@
       scrollContent.appendChild(divider);
       scrollContent.appendChild(adsHeader);
       scrollContent.appendChild(adsList);
-
+      
       console.log('Sponsored traders section created');
 
       try {
@@ -312,7 +312,7 @@
           const adTradersWithStatus = [];
           for (const ad of list) {
             const userId = ad.userId ? parseInt(ad.userId) : null;
-
+            
             if (userId) {
               try {
                 const status = await getStatus(userId);
@@ -342,12 +342,8 @@
             }
           }
 
-          // Do not filter out offline traders; sort by status (Online, Idle, Offline)
-          const sortedAdTraders = adTradersWithStatus.slice();
-          sortedAdTraders.sort((a, b) => {
-            const statusOrder = { 'Online': 0, 'Idle': 1, 'Offline': 2 };
-            return (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
-          });
+          // Keep original order from API - do not sort by status
+          const sortedAdTraders = adTradersWithStatus;
 
           // Count Online + Idle from sponsored and add to header counter
           const sponsoredActiveCount = adTradersWithStatus.filter(ad => ad.status === 'Online' || ad.status === 'Idle').length;
@@ -438,7 +434,7 @@
         li.textContent = 'Error loading sponsored traders';
         adsList.appendChild(li);
       }
-
+      
       // Always ensure sponsored traders section is visible
       console.log('Sponsored traders section should now be visible');
   };
@@ -447,7 +443,7 @@
     const createStatusDot = (status) => {
       const statusDot = document.createElement('span');
       statusDot.className = 'user-status___gptwr';
-
+         
       return statusDot;
     };
 
@@ -580,7 +576,7 @@
         clearInterval(intervalId);
       }
     }, 500);
-
+    
     const observer = new MutationObserver(refreshUI);
     observer.observe(document.body, { childList: true, subtree: true });
 
