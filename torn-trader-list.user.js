@@ -66,13 +66,6 @@
         if (!list.some(t => t.id === id)) {
             const safeName = name && String(name).trim() ? name : `User ${id}`;
             const trader = { id, name: safeName };
-            try {
-                const resp = await gmGetJson(`http://157.180.24.109:3000/GetTraderInfo?userId=${encodeURIComponent(id)}`);
-                if (resp.status === 200 && resp.data && (resp.data.priceLink || resp.data.feedbackLink)) {
-                    trader.priceLink = resp.data.priceLink || undefined;
-                    trader.feedbackLink = resp.data.feedbackLink || undefined;
-                }
-            } catch {}
             list.push(trader);
             await setStoredTraders(list);
             alert(`${safeName} has been added to your trader list.`);
@@ -107,6 +100,25 @@
       if (!targetsBlock) return;
 
       const traders = getStoredTraders();
+
+      // Fetch trader information for all stored traders
+      const tradersWithInfo = [];
+      for (const trader of traders) {
+        try {
+          const resp = await gmGetJson(`http://157.180.24.109:3000/GetTraderInfo?userId=${encodeURIComponent(trader.id)}`);
+          if (resp.status === 200 && resp.data && (resp.data.priceLink || resp.data.feedbackLink)) {
+            tradersWithInfo.push({
+              ...trader,
+              priceLink: resp.data.priceLink || undefined,
+              feedbackLink: resp.data.feedbackLink || undefined
+            });
+          } else {
+            tradersWithInfo.push(trader);
+          }
+        } catch {
+          tradersWithInfo.push(trader);
+        }
+      }
 
       const clone = targetsBlock.cloneNode(true);
       clone.id = 'nav-traders_list';
@@ -167,7 +179,7 @@
 
       targetsBlock.insertAdjacentElement('afterend', clone);
 
-      const statusMap = await Promise.all(traders.map(async (t) => {
+      const statusMap = await Promise.all(tradersWithInfo.map(async (t) => {
           const { status, relative } = await getStatus(t.id);
           return { ...t, status, relative };
       }));
