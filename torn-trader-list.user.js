@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Torn Trader List v2
+// @name         Torn Trader List
 // @namespace    https://torn.com/
-// @version      2.0
+// @version      2.1
 // @description  Trader list manager: add/remove from profile, view status, access trade from sidebar, styled like native sections in Torn sidebar.
 // @match        https://www.torn.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
@@ -19,6 +19,10 @@
     'use strict';
 
     const getApiKey = () => GM_getValue('torn_api_key', '');
+
+    // Prevent concurrent sidebar renders that can happen due to rapid
+    // MutationObserver events or script re-entrancy on some browsers
+    let isRenderingSidebar = false;
 
     // Helper to call external API via GM_xmlhttpRequest (CORS-safe)
     const gmGetJson = (url) => new Promise((resolve) => {
@@ -94,31 +98,16 @@
     };
 
     const renderTraderBlock = async () => {
-      if (document.querySelector('#nav-traders_list')) return;
+      // Avoid duplicate insertions if already present or a render is in-flight
+      if (document.querySelector('#nav-traders_list') || isRenderingSidebar) return;
 
       const targetsBlock = document.querySelector('#nav-targets_list');
       if (!targetsBlock) return;
 
-      const traders = getStoredTraders();
+      isRenderingSidebar = true;
+      try {
 
-      // Fetch trader information for all stored traders
-      const tradersWithInfo = [];
-      for (const trader of traders) {
-        try {
-          const resp = await gmGetJson(`http://157.180.24.109:3000/GetTraderInfo?userId=${encodeURIComponent(trader.id)}`);
-          if (resp.status === 200 && resp.data && (resp.data.priceLink || resp.data.feedbackLink)) {
-            tradersWithInfo.push({
-              ...trader,
-              priceLink: resp.data.priceLink || undefined,
-              feedbackLink: resp.data.feedbackLink || undefined
-            });
-          } else {
-            tradersWithInfo.push(trader);
-          }
-        } catch {
-          tradersWithInfo.push(trader);
-        }
-      }
+      const traders = getStoredTraders();
 
       const clone = targetsBlock.cloneNode(true);
       clone.id = 'nav-traders_list';
@@ -179,6 +168,31 @@
 
       targetsBlock.insertAdjacentElement('afterend', clone);
 
+      // Show a lightweight placeholder immediately to block re-entrancy
+      const loadingLi = document.createElement('li');
+      loadingLi.className = 'idle___N0mMo';
+      loadingLi.textContent = 'Loading...';
+      ul.appendChild(loadingLi);
+
+      // Fetch trader information for all stored traders
+      const tradersWithInfo = [];
+      for (const trader of traders) {
+        try {
+          const resp = await gmGetJson(`http://157.180.24.109:3000/GetTraderInfo?userId=${encodeURIComponent(trader.id)}`);
+          if (resp.status === 200 && resp.data && (resp.data.priceLink || resp.data.feedbackLink)) {
+            tradersWithInfo.push({
+              ...trader,
+              priceLink: resp.data.priceLink || undefined,
+              feedbackLink: resp.data.feedbackLink || undefined
+            });
+          } else {
+            tradersWithInfo.push(trader);
+          }
+        } catch {
+          tradersWithInfo.push(trader);
+        }
+      }
+
       const statusMap = await Promise.all(tradersWithInfo.map(async (t) => {
           const { status, relative } = await getStatus(t.id);
           return { ...t, status, relative };
@@ -189,6 +203,9 @@
       
       // Counter shows Online + Idle
       const onlineCount = activeTraders.length;
+
+      // Replace placeholder
+      ul.innerHTML = '';
 
       if (activeTraders.length === 0) {
           const li = document.createElement('li');
@@ -449,6 +466,10 @@
       
       // Always ensure sponsored traders section is visible
       console.log('Sponsored traders section should now be visible');
+    } finally {
+      // Allow future renders (e.g., if the site re-renders the sidebar)
+      isRenderingSidebar = false;
+    }
   };
 
 
