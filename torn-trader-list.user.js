@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Trader List
 // @namespace    https://torn.com/
-// @version      2.1
+// @version      2.2
 // @description  Trader list manager: add/remove from profile, view status, access trade from sidebar, styled like native sections in Torn sidebar.
 // @match        https://www.torn.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
@@ -18,7 +18,18 @@
 (function () {
     'use strict';
 
-    const getApiKey = () => GM_getValue('torn_api_key', '');
+    const isMobile = () => {
+      return window.innerWidth < 1001;
+    };
+
+    const tornPDA_ApiKey = "###PDA-APIKEY###";
+
+    const getApiKey = () => {
+      if(isMobile()) {
+        return tornPDA_ApiKey;
+      }
+      return GM_getValue('torn_api_key', '');
+    };
 
     // Prevent concurrent sidebar renders that can happen due to rapid
     // MutationObserver events or script re-entrancy on some browsers
@@ -47,13 +58,15 @@
         }
     });
 
-    GM_registerMenuCommand('Set API Key', async () => {
-      const key = prompt('Enter your Torn API Key:');
-      if (key) {
+    if(!isMobile()) {
+      GM_registerMenuCommand('Set API Key', async () => {
+        const key = prompt('Enter your Torn API Key:');
+        if (key) {
           await GM_setValue('torn_api_key', key);
-          alert('API key saved. Reload the page.');
-      }
-    });
+            alert('API key saved. Reload the page.');
+        }
+      });
+    }
 
     const getStoredTraders = () => {
       return GM_getValue('my_traders_list', []);
@@ -65,8 +78,6 @@
 
     const addTrader = async (id, name) => {
         const list = await getStoredTraders();
-        console.log('list', list);
-        console.log(!list.some(t => t.id === id));
         if (!list.some(t => t.id === id)) {
             const safeName = name && String(name).trim() ? name : `User ${id}`;
             const trader = { id, name: safeName };
@@ -100,6 +111,8 @@
     const renderTraderBlock = async () => {
       // Avoid duplicate insertions if already present or a render is in-flight
       if (document.querySelector('#nav-traders_list') || isRenderingSidebar) return;
+      // Only render the sidebar block on web view (non-mobile)
+      if (isMobile()) return;
 
       const targetsBlock = document.querySelector('#nav-targets_list');
       if (!targetsBlock) return;
@@ -134,16 +147,26 @@
       if (arrow) arrow.classList.remove('activated___cYdVV');
 
       const header = clone.querySelector('a.desktopLink___SG2RU');
-      header.href = '#';
+      if (header) {
+        header.href = '#';
+      }
 
       // Collapsible content container (styled like native sections)
       const contentWrap = document.createElement('div');
       contentWrap.className = 'scrollarea scroll-area___zOH66 visible';
       contentWrap.style.display = 'none'; // start closed
+      // Override height constraints to allow content-based growth
+      contentWrap.style.height = 'auto';
+      contentWrap.style.maxHeight = 'none';
+      contentWrap.style.overflow = 'visible';
 
       const scrollContent = document.createElement('div');
       scrollContent.className = 'scrollarea-content';
       scrollContent.setAttribute('tabindex', '1');
+      // Override height constraints for scroll content as well
+      scrollContent.style.height = 'auto';
+      scrollContent.style.maxHeight = 'none';
+      scrollContent.style.overflow = 'visible';
 
       const ul = document.createElement('ul');
       ul.className = 'list___NuD9d';
@@ -163,7 +186,7 @@
       };
 
       // Toggle open/close on header and on number/arrow click
-      header.addEventListener('click', toggleOpen);
+      if (header) header.addEventListener('click', toggleOpen);
       if (info) info.addEventListener('click', toggleOpen);
 
       targetsBlock.insertAdjacentElement('afterend', clone);
@@ -213,8 +236,6 @@
           li.textContent = 'No active traders';
           li.style.marginTop = '5px';
           ul.appendChild(li);
-          console.log('No active traders, but sponsored traders section should still be visible');
-          // Don't return here - continue to show sponsored traders
       }
 
       const priority = { 'Online': 0, 'Idle': 1 };
@@ -322,15 +343,10 @@
       scrollContent.appendChild(divider);
       scrollContent.appendChild(adsHeader);
       scrollContent.appendChild(adsList);
-      
-      console.log('Sponsored traders section created');
 
       try {
-        console.log('Fetching sponsored traders...');
         const res = await gmGetJson('http://157.180.24.109:3000/GetAdTraders');
-        console.log('Sponsored traders response:', res);
         const list = Array.isArray(res.data) ? res.data.slice(0, 5) : [];
-        console.log('Sponsored traders list:', list);
         if (list.length === 0) {
           const li = document.createElement('li');
           li.className = 'idle___N0mMo';
@@ -463,20 +479,437 @@
         li.textContent = 'Error loading sponsored traders';
         adsList.appendChild(li);
       }
-      
-      // Always ensure sponsored traders section is visible
-      console.log('Sponsored traders section should now be visible');
     } finally {
-      // Allow future renders (e.g., if the site re-renders the sidebar)
       isRenderingSidebar = false;
     }
   };
 
+	// Mobile toggle button + panel (<=1000px)
+	// Creates a chat-like button that opens a small floating panel with the trader list
+	let mobileToggleInjected = false;
+	let mobilePanelEl = null;
+	let mobileCache = { active: [], sponsored: [], loaded: false };
+	let mobileFetchInFlight = null;
+
+	const traderFolderSvg24 = () => {
+		// Reuse the briefcase/folder shape used in the sidebar, scaled to 24
+		return `
+		<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 1 16 13.33" width="24" height="24" class="root___DYylw icon___qhStJ">
+			<defs>
+				<!-- Use the same gradient id used by chat icons so theme colors match -->
+				<linearGradient id="icon_gradient48_default" x1="0.5" x2="0.5" y2="1" gradientUnits="objectBoundingBox">
+					<stop id="start" offset="0"></stop>
+					<stop id="end" offset="1"></stop>
+				</linearGradient>
+			</defs>
+			<g fill="url(#icon_gradient48_default)">
+				<path d="M16,14.33H0v-10H16ZM6,1A1.33,1.33,0,0,0,4.67,2.33V3.67H6v-1a.34.34,0,0,1,.33-.34H9.67a.34.34,0,0,1,.33.34v1h1.33V2.33A1.33,1.33,0,0,0,10,1Z"></path>
+			</g>
+		</svg>`;
+	};
+
+	const ensureMobileToggle = () => {
+		const wantsMobile = isMobile();
+		if (!wantsMobile) {
+			// Remove panel + toggle if present
+			if (mobilePanelEl && mobilePanelEl.parentNode) mobilePanelEl.parentNode.removeChild(mobilePanelEl);
+			mobilePanelEl = null;
+			const btnWrap = document.getElementById('trader_list_mobile_wrap');
+			if (btnWrap && btnWrap.parentNode) btnWrap.parentNode.removeChild(btnWrap);
+			mobileToggleInjected = false;
+			return;
+		}
+
+		if (mobileToggleInjected) return;
+
+		// Try to find the chat strip at the bottom-right (web view). Avoid top bar buttons on mobile.
+		const candidates = Array.from(document.querySelectorAll('button[id^="channel_panel_button"]'));
+		let bottomChatBtn = null;
+		let maxTop = -1;
+		for (const btnEl of candidates) {
+			const rect = btnEl.getBoundingClientRect();
+			// Prefer buttons visually in the lower half of the viewport (chat cluster)
+			if (rect.top > window.innerHeight * 0.5 && rect.top > maxTop) {
+				maxTop = rect.top;
+				bottomChatBtn = btnEl;
+			}
+		}
+		const strip = bottomChatBtn ? bottomChatBtn.parentElement : null; // chat cluster wrapper
+
+		const wrap = document.createElement('div');
+		wrap.id = 'trader_list_mobile_wrap';
+		wrap.className = 'root___cYD0i';
+
+		const btn = document.createElement('button');
+		btn.type = 'button';
+		btn.id = 'trader_list_mobile_btn';
+		btn.title = 'Traders';
+		btn.className = 'root___WHFbh root___K2Yex root___RLOBS';
+		btn.innerHTML = traderFolderSvg24();
+		btn.addEventListener('click', (e) => {
+			e.preventDefault();
+			toggleMobilePanel();
+		});
+
+		wrap.appendChild(btn);
+		if (strip && strip.parentElement) {
+			// Place before the chat buttons container
+			strip.parentElement.insertBefore(wrap, strip);
+		} else {
+			// No bottom chat cluster found (likely true mobile). Do not inject here.
+			return;
+		}
+
+		mobileToggleInjected = true;
+	};
+
+	const toggleMobilePanel = async () => {
+		if (!mobilePanelEl) {
+			mobilePanelEl = document.createElement('div');
+			mobilePanelEl.id = 'trader_list_mobile_panel';
+			mobilePanelEl.style.position = 'fixed';
+			mobilePanelEl.style.right = '12px';
+			mobilePanelEl.style.bottom = '56px';
+			mobilePanelEl.style.width = 'min(90vw, 260px)';
+			mobilePanelEl.style.maxHeight = '80vh';
+			mobilePanelEl.style.overflow = 'auto';
+			mobilePanelEl.style.background = 'rgba(15, 15, 20, 0.96)';
+			mobilePanelEl.style.border = '1px solid rgba(255,255,255,0.08)';
+			mobilePanelEl.style.borderRadius = '8px';
+			mobilePanelEl.style.boxShadow = '0 8px 20px rgba(0,0,0,0.35)';
+			mobilePanelEl.style.zIndex = '10000';
+
+			const header = document.createElement('div');
+			header.style.display = 'flex';
+			header.style.alignItems = 'center';
+			header.style.justifyContent = 'space-between';
+			header.style.padding = '8px 10px';
+			header.style.fontWeight = '600';
+			header.style.fontSize = '13px';
+			header.textContent = 'Traders';
+
+			const closeBtn = document.createElement('button');
+			closeBtn.type = 'button';
+			closeBtn.textContent = '×';
+			closeBtn.style.background = 'transparent';
+			closeBtn.style.border = '0';
+			closeBtn.style.color = 'inherit';
+			closeBtn.style.fontSize = '18px';
+			closeBtn.style.cursor = 'pointer';
+			closeBtn.addEventListener('click', () => {
+				if (mobilePanelEl && mobilePanelEl.parentNode) mobilePanelEl.parentNode.removeChild(mobilePanelEl);
+				mobilePanelEl = null;
+			});
+
+			header.appendChild(closeBtn);
+			mobilePanelEl.appendChild(header);
+
+			const content = document.createElement('div');
+			content.style.maxHeight = 'calc(80vh - 38px)';
+			content.style.overflow = 'auto';
+			content.style.padding = '6px 8px 10px';
+
+			const list = document.createElement('ul');
+			list.style.listStyle = 'none';
+			list.style.padding = '0';
+			list.style.margin = '0';
+
+			content.appendChild(list);
+			mobilePanelEl.appendChild(content);
+			document.body.appendChild(mobilePanelEl);
+
+			await populateTraderList(list);
+		} else {
+			mobilePanelEl.parentNode.removeChild(mobilePanelEl);
+			mobilePanelEl = null;
+		}
+	};
+
+	const prefetchMobileData = async () => {
+		if (!isMobile()) return; // only prefetch for mobile view
+		if (mobileFetchInFlight) return mobileFetchInFlight;
+		mobileFetchInFlight = (async () => {
+			try {
+				// Active traders
+				const traders = getStoredTraders();
+				const tradersWithInfo = [];
+				for (const trader of traders) {
+					try {
+						const resp = await gmGetJson(`http://157.180.24.109:3000/GetTraderInfo?userId=${encodeURIComponent(trader.id)}`);
+						if (resp.status === 200 && resp.data && (resp.data.priceLink || resp.data.feedbackLink)) {
+							tradersWithInfo.push({ ...trader, priceLink: resp.data.priceLink || undefined, feedbackLink: resp.data.feedbackLink || undefined });
+						} else {
+							tradersWithInfo.push(trader);
+						}
+					} catch {
+						tradersWithInfo.push(trader);
+					}
+				}
+
+				const statusMap = await Promise.all(tradersWithInfo.map(async (t) => {
+					const { status, relative } = await getStatus(t.id);
+					return { ...t, status, relative };
+				}));
+
+				const activeTraders = statusMap.filter(t => t.status === 'Online' || t.status === 'Idle');
+				const priority = { 'Online': 0, 'Idle': 1 };
+				activeTraders.sort((a, b) => {
+					const statusDiff = (priority[a.status] ?? 1) - (priority[b.status] ?? 1);
+					if (statusDiff !== 0) return statusDiff;
+					return relativeToMinutes(a.relative) - relativeToMinutes(b.relative);
+				});
+
+				// Sponsored traders
+				let sponsored = [];
+				try {
+					const res = await gmGetJson('http://157.180.24.109:3000/GetAdTraders');
+					const list = Array.isArray(res.data) ? res.data.slice(0, 5) : [];
+					const adTradersWithStatus = [];
+					for (const ad of list) {
+						const userId = ad.userId ? parseInt(ad.userId) : (ad.id ? parseInt(ad.id) : null);
+						if (userId) {
+							try {
+								const status = await getStatus(userId);
+								adTradersWithStatus.push({ ...ad, id: userId, status: status.status, relative: status.relative });
+							} catch {
+								adTradersWithStatus.push({ ...ad, id: userId, status: 'Offline', relative: 'Unknown' });
+							}
+						} else {
+							adTradersWithStatus.push({ ...ad, id: null, status: 'Offline', relative: 'Unknown' });
+						}
+					}
+					sponsored = adTradersWithStatus;
+				} catch {
+					sponsored = [];
+				}
+
+				mobileCache = { active: activeTraders, sponsored, loaded: true };
+			} finally {
+				// keep the promise for any awaiters, then reset to allow manual refreshes later
+				const done = mobileFetchInFlight;
+				mobileFetchInFlight = done; // keep same promise for concurrent callers
+			}
+		})();
+		return mobileFetchInFlight;
+	};
+
+	const populateTraderList = async (ul) => {
+		ul.innerHTML = '';
+		const loading = document.createElement('li');
+		loading.textContent = 'Loading...';
+		loading.style.opacity = '0.8';
+		loading.style.padding = '4px 2px';
+		ul.appendChild(loading);
+
+		try {
+			if (!mobileCache.loaded) {
+				await prefetchMobileData();
+			}
+
+			ul.innerHTML = '';
+			const activeTraders = mobileCache.active;
+			if (activeTraders.length === 0) {
+				const li = document.createElement('li');
+				li.textContent = 'No active traders';
+				li.style.opacity = '0.85';
+				li.style.padding = '4px 2px';
+				ul.appendChild(li);
+			}
+
+			for (const t of activeTraders) {
+				const li = document.createElement('li');
+				li.style.display = 'flex';
+				li.style.alignItems = 'center';
+				li.style.gap = '6px';
+				li.style.padding = '4px 2px';
+
+				const statusDot = createStatusDot(t.status);
+				const nameLink = document.createElement('a');
+				nameLink.href = `https://www.torn.com/profiles.php?XID=${t.id}`;
+				nameLink.textContent = t.name;
+				nameLink.style.flex = '1 1 auto';
+				nameLink.style.color = 'inherit';
+				nameLink.style.textDecoration = 'none';
+
+				if (t.status === 'Idle') {
+					const relText = `Idle: ${formatRelative(t.relative)}`;
+					nameLink.title = relText;
+					statusDot.title = relText;
+					li.title = relText;
+				}
+
+				const iconsContainer = document.createElement('span');
+				iconsContainer.style.display = 'inline-flex';
+				iconsContainer.style.alignItems = 'center';
+				iconsContainer.style.gap = '4px';
+				iconsContainer.style.marginLeft = 'auto';
+				iconsContainer.style.opacity = '0.75';
+
+				if (t.priceLink) {
+					const priceIcon = document.createElement('a');
+					priceIcon.href = t.priceLink;
+					priceIcon.target = '_blank';
+					priceIcon.rel = 'noopener';
+					priceIcon.title = 'Prices';
+					priceIcon.style.color = 'inherit';
+					priceIcon.style.textDecoration = 'none';
+					priceIcon.innerHTML = priceSvgIcon;
+					iconsContainer.appendChild(priceIcon);
+				}
+
+				if (t.feedbackLink) {
+					const feedbackIcon = document.createElement('a');
+					feedbackIcon.href = t.feedbackLink;
+					feedbackIcon.target = '_blank';
+					feedbackIcon.rel = 'noopener';
+					feedbackIcon.title = 'Feedback';
+					feedbackIcon.style.color = 'inherit';
+					feedbackIcon.style.textDecoration = 'none';
+					feedbackIcon.innerHTML = feedbackSvgIcon;
+					iconsContainer.appendChild(feedbackIcon);
+				}
+
+				const tradeIcon = document.createElement('a');
+				tradeIcon.href = `https://www.torn.com/trade.php#step=start&userID=${t.id}`;
+				tradeIcon.title = 'Start Trade';
+				tradeIcon.style.color = 'inherit';
+				tradeIcon.style.textDecoration = 'none';
+				tradeIcon.innerHTML = tradeSvgIcon;
+				iconsContainer.appendChild(tradeIcon);
+
+				li.appendChild(statusDot);
+				li.appendChild(nameLink);
+				li.appendChild(iconsContainer);
+				ul.appendChild(li);
+			}
+
+			// Sponsored Traders section (mobile)
+			const divider = document.createElement('div');
+			divider.style.margin = '6px 0 4px';
+			divider.style.borderTop = '1px solid rgba(255,255,255,0.08)';
+			divider.style.opacity = '0.9';
+			ul.appendChild(divider);
+
+			const adsHeader = document.createElement('div');
+			adsHeader.textContent = 'Sponsored Traders';
+			adsHeader.style.fontSize = '11px';
+			adsHeader.style.opacity = '0.85';
+			adsHeader.style.margin = '0 2px 4px';
+			ul.appendChild(adsHeader);
+
+			try {
+				const list = Array.isArray(mobileCache.sponsored) ? mobileCache.sponsored.slice(0, 5) : [];
+				if (list.length === 0) {
+					const li = document.createElement('li');
+					li.textContent = 'No sponsored traders';
+					li.style.opacity = '0.85';
+					li.style.padding = '2px 2px 4px';
+					ul.appendChild(li);
+				} else {
+					for (const ad of list) {
+						const li = document.createElement('li');
+						li.style.display = 'flex';
+						li.style.alignItems = 'center';
+						li.style.gap = '6px';
+						li.style.padding = '2px 2px 4px';
+
+						const status = ad.status || 'Offline';
+						const statusDot = createStatusDot(status);
+
+						const nameLink = document.createElement('a');
+						nameLink.href = `https://www.torn.com/profiles.php?XID=${ad.id || ad.userId || ''}`;
+						nameLink.textContent = ad.name || 'Trader';
+						nameLink.style.flex = '1 1 auto';
+						nameLink.style.color = 'inherit';
+						nameLink.style.textDecoration = 'none';
+
+						const iconsContainer = document.createElement('span');
+						iconsContainer.style.display = 'inline-flex';
+						iconsContainer.style.alignItems = 'center';
+						iconsContainer.style.gap = '4px';
+						iconsContainer.style.marginLeft = 'auto';
+						iconsContainer.style.opacity = '0.75';
+
+						if (ad.traderPriceLink) {
+							const priceIcon = document.createElement('a');
+							priceIcon.href = ad.traderPriceLink;
+							priceIcon.target = '_blank';
+							priceIcon.rel = 'noopener';
+							priceIcon.title = 'Prices';
+							priceIcon.style.color = 'inherit';
+							priceIcon.style.textDecoration = 'none';
+							priceIcon.innerHTML = priceSvgIcon;
+							iconsContainer.appendChild(priceIcon);
+						}
+
+						if (ad.traderFeedbackLink) {
+							const feedbackIcon = document.createElement('a');
+							feedbackIcon.href = ad.traderFeedbackLink;
+							feedbackIcon.target = '_blank';
+							feedbackIcon.rel = 'noopener';
+							feedbackIcon.title = 'Feedback';
+							feedbackIcon.style.color = 'inherit';
+							feedbackIcon.style.textDecoration = 'none';
+							feedbackIcon.innerHTML = feedbackSvgIcon;
+							iconsContainer.appendChild(feedbackIcon);
+						}
+
+						if (ad.id || ad.userId) {
+							const tradeIcon = document.createElement('a');
+							const uid = ad.id || ad.userId;
+							tradeIcon.href = `https://www.torn.com/trade.php#step=start&userID=${uid}`;
+							tradeIcon.title = 'Start Trade';
+							tradeIcon.style.color = 'inherit';
+							tradeIcon.style.textDecoration = 'none';
+							tradeIcon.innerHTML = tradeSvgIcon;
+							iconsContainer.appendChild(tradeIcon);
+						}
+
+						li.appendChild(statusDot);
+						li.appendChild(nameLink);
+						li.appendChild(iconsContainer);
+						ul.appendChild(li);
+					}
+				}
+			} catch (err) {
+				const li = document.createElement('li');
+				li.textContent = 'Error loading sponsored traders';
+				li.style.opacity = '0.85';
+				ul.appendChild(li);
+			}
+
+		} catch (e) {
+			ul.innerHTML = '';
+			const err = document.createElement('li');
+			err.textContent = 'Error loading traders';
+			err.style.opacity = '0.85';
+			ul.appendChild(err);
+		}
+	};
+
 
     const createStatusDot = (status) => {
       const statusDot = document.createElement('span');
+      // Match Torn's status dot classes when available, with inline fallback colors
       statusDot.className = 'user-status___gptwr';
-         
+      statusDot.style.display = 'inline-block';
+      statusDot.style.width = '8px';
+      statusDot.style.height = '8px';
+      statusDot.style.borderRadius = '50%';
+      statusDot.style.flex = '0 0 auto';
+
+      const normalized = (status || '').toLowerCase();
+      if (normalized === 'online') {
+        statusDot.classList.add('online___YnKOn');
+        statusDot.style.backgroundColor = 'rgb(60, 199, 120)';
+      } else if (normalized === 'idle') {
+        statusDot.classList.add('idle___N0mMo');
+        statusDot.style.backgroundColor = 'rgb(240, 200, 80)';
+      } else {
+        statusDot.classList.add('offline___default');
+        statusDot.style.backgroundColor = 'rgba(255,255,255,0.35)';
+      }
+
       return statusDot;
     };
 
@@ -591,6 +1024,7 @@
     const refreshUI = () => {
       // Always try to inject; functions are safe if elements are missing
       renderTraderBlock();
+      ensureMobileToggle();
     };
 
     // Use setInterval to keep checking for button container
@@ -612,6 +1046,10 @@
     
     const observer = new MutationObserver(refreshUI);
     observer.observe(document.body, { childList: true, subtree: true });
+
+    // Mobile UI init and listeners
+    ensureMobileToggle();
+    window.addEventListener('resize', ensureMobileToggle);
 
     // Tooltip helpers and icons
     const priceSvgIcon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M10.9042 2.10025L20.8037 3.51446L22.2179 13.414L13.0255 22.6063C12.635 22.9969 12.0019 22.9969 11.6113 22.6063L1.71184 12.7069C1.32131 12.3163 1.32131 11.6832 1.71184 11.2926L10.9042 2.10025ZM11.6113 4.22157L3.83316 11.9997L12.3184 20.485L20.0966 12.7069L19.036 5.28223L11.6113 4.22157ZM13.7327 10.5855C12.9516 9.80448 12.9516 8.53815 13.7327 7.7571C14.5137 6.97606 15.78 6.97606 16.5611 7.7571C17.3421 8.53815 17.3421 9.80448 16.5611 10.5855C15.78 11.3666 14.5137 11.3666 13.7327 10.5855Z"></path></svg>';
